@@ -40,6 +40,14 @@ HAZARDS = [
 CYLINDER_SIZE_LB = 100.0   # v1 fixed (≈45.4 kg)
 LB_TO_KG = 0.453592
 M3_TO_FT3 = 35.3147
+UNIT_OPTIONS = [
+    ("Meters (m)", "m", 1.0),
+    ("Centimeters (cm)", "cm", 0.01),
+    ("Millimeters (mm)", "mm", 0.001),
+    ("Feet (ft)", "ft", 0.3048),
+    ("Inches (in)", "in", 0.0254),
+]
+UNIT_TO_M = {unit: factor for _, unit, factor in UNIT_OPTIONS}
 
 
 def calculate_co2(system_data: dict) -> dict:
@@ -228,7 +236,7 @@ def export_pdf(path: str, system_data: dict, results: dict) -> None:
     styles = getSampleStyleSheet()
     story = []
 
-    title = "CO₂ Total Flooding Calculator Report (Conceptual) – NFPA 12"
+    title = "<font color='#1F4E79'>CO₂ Total Flooding Calculator Report (Conceptual) – NFPA 12</font>"
     story.append(Paragraph(title, styles["Title"]))
     story.append(Spacer(1, 8))
 
@@ -237,6 +245,7 @@ def export_pdf(path: str, system_data: dict, results: dict) -> None:
 
     # Project info
     proj = [
+        ["Field", "Value"],
         ["Project Name", system_data.get("project_name", "")],
         ["Room Name", system_data.get("room_name", "")],
         ["Hazard Type", system_data.get("hazard", "")],
@@ -246,22 +255,35 @@ def export_pdf(path: str, system_data: dict, results: dict) -> None:
         ["Nozzle Tag (schematic)", system_data.get("nozzle_tag", "E1-N1")],
     ]
     story.append(Paragraph("Project Information", styles["Heading2"]))
-    story.append(_styled_table(proj, col_widths=[170, 330]))
+    story.append(_styled_table(proj, col_widths=[170, 330], has_header=True))
     story.append(Spacer(1, 10))
 
     # Inputs
+    dims_original = system_data["dimensions_original"]
+    unit_label = system_data.get("dimension_unit_label", "m")
     L, W, H = system_data["dimensions_m"]
     inputs = [
-        ["Length (m)", f"{L:.2f}"],
-        ["Width (m)", f"{W:.2f}"],
-        ["Height (m)", f"{H:.2f}"],
+        ["Dimension", "Entered Value", "Meters (m)"],
+        ["Length", f"{dims_original[0]:.2f} {unit_label}", f"{L:.2f}"],
+        ["Width", f"{dims_original[1]:.2f} {unit_label}", f"{W:.2f}"],
+        ["Height", f"{dims_original[2]:.2f} {unit_label}", f"{H:.2f}"],
     ]
     story.append(Paragraph("Inputs", styles["Heading2"]))
-    story.append(_styled_table(inputs, col_widths=[220, 280]))
+    story.append(_styled_table(inputs, col_widths=[160, 170, 170], has_header=True))
+    story.append(Spacer(1, 10))
+
+    summary = [
+        ["Key Summary", "Value"],
+        ["Total CO₂ Required", f"{results['total_lb']:.2f} lb   ({results['total_kg']:.2f} kg)"],
+        ["Total Cylinders", str(results["cylinders_total"])],
+    ]
+    story.append(Paragraph("Summary Highlights", styles["Heading2"]))
+    story.append(_styled_table(summary, col_widths=[200, 300], has_header=True, accent_color=colors.HexColor("#1F4E79")))
     story.append(Spacer(1, 10))
 
     # Results
     out = [
+        ["Metric", "Value"],
         ["Net Room Volume", f"{results['volume_m3']:.2f} m³   ({results['volume_ft3']:.2f} ft³)"],
         ["Base CO₂ Required", f"{results['base_lb']:.2f} lb"],
         ["Total CO₂ Required (with safety factor)", f"{results['total_lb']:.2f} lb   ({results['total_kg']:.2f} kg)"],
@@ -270,7 +292,7 @@ def export_pdf(path: str, system_data: dict, results: dict) -> None:
         ["Total Cylinders", str(results["cylinders_total"])],
     ]
     story.append(Paragraph("Calculation Results", styles["Heading2"]))
-    story.append(_styled_table(out, col_widths=[240, 260]))
+    story.append(_styled_table(out, col_widths=[240, 260], has_header=True))
     story.append(Spacer(1, 12))
 
     # Schematic (NEW style)
@@ -292,7 +314,7 @@ def export_pdf(path: str, system_data: dict, results: dict) -> None:
     doc.build(story)
 
 
-def _styled_table(data, col_widths=None):
+def _styled_table(data, col_widths=None, has_header=False, accent_color=colors.HexColor("#2F5597")):
     tbl = Table(data, colWidths=col_widths)
     style = TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
@@ -301,6 +323,10 @@ def _styled_table(data, col_widths=None):
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.whitesmoke, colors.lightgrey]),
     ])
+    if has_header:
+        style.add("BACKGROUND", (0, 0), (-1, 0), accent_color)
+        style.add("TEXTCOLOR", (0, 0), (-1, 0), colors.white)
+        style.add("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold")
     tbl.setStyle(style)
     return tbl
 
@@ -338,38 +364,52 @@ class CO2App(ctk.CTk):
             row=0, column=0, columnspan=2, pady=(10, 12), sticky="w", padx=12
         )
 
-        self.project_name = self._add_entry(f, "Project Name", 1, "Project A")
-        self.room_name = self._add_entry(f, "Room Name", 2, "CO2 Room")
+        _, self.project_name = self._add_entry(f, "Project Name", 1, "Project A")
+        _, self.room_name = self._add_entry(f, "Room Name", 2, "CO2 Room")
 
-        self.len_m = self._add_entry(f, "Length (m)", 3, "6")
-        self.wid_m = self._add_entry(f, "Width (m)", 4, "5")
-        self.hei_m = self._add_entry(f, "Height (m)", 5, "3")
+        self.unit_label_var = ctk.StringVar(value=UNIT_OPTIONS[0][1])
+        ctk.CTkLabel(f, text="Input Units (scrollable)").grid(row=3, column=0, sticky="w", padx=12, pady=(6, 2))
+        self.unit_frame = ctk.CTkScrollableFrame(f, height=70)
+        self.unit_frame.grid(row=3, column=1, sticky="ew", padx=12, pady=(6, 2))
+        for idx, (label, unit, _) in enumerate(UNIT_OPTIONS):
+            ctk.CTkRadioButton(
+                self.unit_frame,
+                text=label,
+                value=unit,
+                variable=self.unit_label_var,
+                command=self._update_dimension_labels,
+            ).grid(row=idx, column=0, sticky="w", padx=6, pady=2)
 
-        ctk.CTkLabel(f, text="Hazard (NFPA 12 category)").grid(row=6, column=0, sticky="w", padx=12, pady=(10, 4))
+        self.len_label, self.len_m = self._add_entry(f, "Length (m)", 4, "6")
+        self.wid_label, self.wid_m = self._add_entry(f, "Width (m)", 5, "5")
+        self.hei_label, self.hei_m = self._add_entry(f, "Height (m)", 6, "3")
+
+        ctk.CTkLabel(f, text="Hazard (NFPA 12 category)").grid(row=7, column=0, sticky="w", padx=12, pady=(10, 4))
         self.hazard = ctk.CTkOptionMenu(f, values=HAZARDS)
         self.hazard.set(HAZARDS[0])
-        self.hazard.grid(row=6, column=1, sticky="ew", padx=12, pady=(10, 4))
+        self.hazard.grid(row=7, column=1, sticky="ew", padx=12, pady=(10, 4))
 
-        self.safety_factor = self._add_entry(f, "Safety Factor", 7, "1.1")
+        _, self.safety_factor = self._add_entry(f, "Safety Factor", 8, "1.1")
 
         # NEW: Include Reserve Bank
-        ctk.CTkLabel(f, text="Cylinder Banks").grid(row=8, column=0, sticky="w", padx=12, pady=(12, 4))
+        ctk.CTkLabel(f, text="Cylinder Banks").grid(row=9, column=0, sticky="w", padx=12, pady=(12, 4))
         self.opt_reserve = ctk.CTkCheckBox(f, text="Include Reserve Bank (Total = Main + Reserve)", onvalue=True, offvalue=False)
         self.opt_reserve.select()  # default ON
-        self.opt_reserve.grid(row=9, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
+        self.opt_reserve.grid(row=10, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
 
         # NEW: Nozzle tag (for schematic)
-        self.nozzle_tag = self._add_entry(f, "Nozzle Tag (schematic)", 10, "E1-N1")
+        _, self.nozzle_tag = self._add_entry(f, "Nozzle Tag (schematic)", 11, "E1-N1")
 
         # Buttons
         self.calc_btn = ctk.CTkButton(f, text="Calculate", command=self.on_calculate)
-        self.calc_btn.grid(row=11, column=0, padx=12, pady=(18, 10), sticky="ew")
+        self.calc_btn.grid(row=12, column=0, padx=12, pady=(18, 10), sticky="ew")
 
         self.pdf_btn = ctk.CTkButton(f, text="Export PDF", command=self.on_export_pdf)
-        self.pdf_btn.grid(row=11, column=1, padx=12, pady=(18, 10), sticky="ew")
+        self.pdf_btn.grid(row=12, column=1, padx=12, pady=(18, 10), sticky="ew")
 
         note = "v1: Cylinder size fixed at 100 lb (~45.4 kg)."
-        ctk.CTkLabel(f, text=note).grid(row=12, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+        ctk.CTkLabel(f, text=note).grid(row=13, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+        self._update_dimension_labels()
 
     def _build_outputs(self):
         f = self.output_frame
@@ -421,9 +461,17 @@ class CO2App(ctk.CTk):
         project_name = self.project_name.get().strip()
         room_name = self.room_name.get().strip()
 
-        L = float(self.len_m.get())
-        W = float(self.wid_m.get())
-        H = float(self.hei_m.get())
+        unit = self.unit_label_var.get()
+        if unit not in UNIT_TO_M:
+            raise ValueError("Please select a valid unit.")
+
+        L_input = float(self.len_m.get())
+        W_input = float(self.wid_m.get())
+        H_input = float(self.hei_m.get())
+        factor = UNIT_TO_M[unit]
+        L = L_input * factor
+        W = W_input * factor
+        H = H_input * factor
 
         hazard = self.hazard.get().strip()
         safety_factor = float(self.safety_factor.get())
@@ -435,6 +483,9 @@ class CO2App(ctk.CTk):
             "project_name": project_name,
             "room_name": room_name,
             "dimensions_m": (L, W, H),
+            "dimensions_original": (L_input, W_input, H_input),
+            "dimension_unit": unit,
+            "dimension_unit_label": unit,
             "hazard": hazard,
             "safety_factor": safety_factor,
             "include_reserve": include_reserve,
@@ -443,6 +494,8 @@ class CO2App(ctk.CTk):
 
     def _format_results(self, system_data: dict, r: dict) -> str:
         reserve_txt = "Yes" if r.get("include_reserve", True) else "No"
+        dims_original = system_data.get("dimensions_original", system_data.get("dimensions_m"))
+        unit_label = system_data.get("dimension_unit_label", "m")
         return (
             f"Project: {system_data.get('project_name','')}\n"
             f"Room: {system_data.get('room_name','')}\n"
@@ -452,6 +505,8 @@ class CO2App(ctk.CTk):
             f"Net Volume:\n"
             f"  - {r['volume_m3']:.2f} m³\n"
             f"  - {r['volume_ft3']:.2f} ft³\n\n"
+            f"Dimensions ({unit_label}):\n"
+            f"  - L: {dims_original[0]:.2f}, W: {dims_original[1]:.2f}, H: {dims_original[2]:.2f}\n\n"
             f"CO₂ Requirement:\n"
             f"  - Base: {r['base_lb']:.2f} lb\n"
             f"  - Total (SF={system_data.get('safety_factor',1.1)}): {r['total_lb']:.2f} lb  ({r['total_kg']:.2f} kg)\n\n"
@@ -464,11 +519,19 @@ class CO2App(ctk.CTk):
         )
 
     def _add_entry(self, parent, label, row, default=""):
-        ctk.CTkLabel(parent, text=label).grid(row=row, column=0, sticky="w", padx=12, pady=4)
+        label_widget = ctk.CTkLabel(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", padx=12, pady=4)
         entry = ctk.CTkEntry(parent)
         entry.insert(0, default)
         entry.grid(row=row, column=1, sticky="ew", padx=12, pady=4)
-        return entry
+        return label_widget, entry
+
+    def _update_dimension_labels(self):
+        unit = self.unit_label_var.get()
+        label = unit if unit else "m"
+        self.len_label.configure(text=f"Length ({label})")
+        self.wid_label.configure(text=f"Width ({label})")
+        self.hei_label.configure(text=f"Height ({label})")
 
     def _set_results_text(self, text: str):
         self.results_box.configure(state="normal")
